@@ -2,6 +2,7 @@
 # -*- encoding: utf-8 -*-
 # Copyright (c) Megvii Inc. All rights reserved.
 
+import os
 import torch
 import torch.nn as nn
 
@@ -128,12 +129,20 @@ class SPPBottleneck(nn.Module):
         super().__init__()
         hidden_channels = in_channels // 2
         self.conv1 = BaseConv(in_channels, hidden_channels, 1, stride=1, act=activation)
-        self.m = nn.ModuleList(
-            [
-                nn.MaxPool2d(kernel_size=ks, stride=1, padding=ks // 2)
-                for ks in kernel_sizes
-            ]
-        )
+        if os.getenv('RKNN_model_hack', '0') == 'npu_1':
+            self.m = nn.ModuleList(
+                [
+                    nn.Sequential(*[nn.MaxPool2d(3,1,1) for i in range(ks//2)])
+                    for ks in kernel_sizes
+                ]
+            )
+        else:
+            self.m = nn.ModuleList(
+                [
+                    nn.MaxPool2d(kernel_size=ks, stride=1, padding=ks // 2)
+                    for ks in kernel_sizes
+                ]
+            )
         conv2_channels = hidden_channels * (len(kernel_sizes) + 1)
         self.conv2 = BaseConv(conv2_channels, out_channels, 1, stride=1, act=activation)
 
@@ -191,9 +200,17 @@ class Focus(nn.Module):
     def __init__(self, in_channels, out_channels, ksize=1, stride=1, act="silu"):
         super().__init__()
         self.conv = BaseConv(in_channels * 4, out_channels, ksize, stride, act=act)
+        self.sf = Focus_slice()
 
     def forward(self, x):
         # shape of x (b,c,w,h) -> y(b,4c,w/2,h/2)
+        return self.conv(self.sf(x))
+
+class Focus_slice(nn.Module):
+    def __init__(self):
+        super(Focus_slice, self).__init__()
+
+    def forward(self,x):
         patch_top_left = x[..., ::2, ::2]
         patch_top_right = x[..., ::2, 1::2]
         patch_bot_left = x[..., 1::2, ::2]
@@ -207,4 +224,25 @@ class Focus(nn.Module):
             ),
             dim=1,
         )
-        return self.conv(x)
+        return x
+
+class Focus_conv(nn.Module):
+    def __init__(self):
+        super(Focus_conv, self).__init__()
+        with torch.no_grad():
+            self.convsp = nn.Conv2d(3, 12, (2, 2), groups=1, bias=False, stride=(2, 2))
+            self.convsp.weight.data = torch.zeros(self.convsp.weight.shape).float()
+            for i in range(4):
+                for j in range(3):
+                    ch = i*3 + j
+                    if ch>=0 and ch<3:
+                        self.convsp.weight[ch:ch+1, j:j+1, 0, 0] = 1
+                    elif ch>=3 and ch<6:
+                        self.convsp.weight[ch:ch+1, j:j+1, 1, 0] = 1
+                    elif ch>=6 and ch<9:
+                        self.convsp.weight[ch:ch+1, j:j+1, 0, 1] = 1
+                    elif ch>=9 and ch<12:
+                        self.convsp.weight[ch:ch+1, j:j+1, 1, 1] = 1
+    
+    def forward(self,x):
+        return self.convsp(x)
