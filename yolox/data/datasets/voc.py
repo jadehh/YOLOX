@@ -9,7 +9,6 @@
 import os
 import os.path
 import pickle
-import xml.etree.ElementTree as ET
 from loguru import logger
 
 import cv2
@@ -19,6 +18,7 @@ from yolox.evaluators.voc_eval import voc_eval
 
 from .datasets_wrapper import Dataset
 from .voc_classes import VOC_CLASSES
+import defusedxml.ElementTree
 
 
 class AnnotationTransform(object):
@@ -190,7 +190,7 @@ class VOCDetection(Dataset):
 
     def load_anno_from_ids(self, index):
         img_id = self.ids[index]
-        target = ET.parse(self._annopath % img_id).getroot()
+        target = defusedxml.ElementTree.parse(self._annopath % img_id).getroot()
 
         assert self.target_transform is not None
         res, img_info = self.target_transform(target)
