@@ -7,14 +7,14 @@
 
 import os
 import pickle
-import xml.etree.ElementTree as ET
 
 import numpy as np
+import defusedxml.ElementTree
 
 
 def parse_rec(filename):
     """ Parse a PASCAL VOC xml file """
-    tree = ET.parse(filename)
+    tree = defusedxml.ElementTree.parse(filename)
     objects = []
     for obj in tree.findall("object"):
         obj_struct = {}
